@@ -1,4 +1,3 @@
-const MerossCloud = require("meross-cloud");
 require("dotenv").config();
 const twilio = require("twilio");
 const VoiceResponse = twilio.twiml.VoiceResponse;
@@ -6,32 +5,35 @@ const client = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
 );
+const MerossCloud = require("meross-cloud");
 const express = require("express");
 const urlencoded = require("body-parser").urlencoded;
 
 const app = express();
-let dev = undefined;
-const GARAGE_OPEN_THRESHOLD = Number(process.env.GARAGE_OPEN_THRESHOLD);
+
+const GARAGE_OPEN_THRESHOLD = Number(process.env.GARAGE_OPEN_THRESHOLD),
+  RETRY_INTERVAL = Number(process.env.RETRY_INTERVAL),
+  NAG_RETRY_COUNT = Number(process.env.NAG_RETRY_COUNT);
+const callees = process.env.CALLEES.split(",");
 
 // Parse incoming POST params with Express middleware
 app.use(urlencoded({ extended: false }));
 
-const callees = process.env.CALLEES.split(",");
-let reminderId = undefined;
-let nagId = undefined;
+let dev = undefined,
+  reminderId = undefined,
+  nagId = undefined,
+  nagRetryCount = 0;
 
 function cleanup() {
-  if (reminderId !== undefined) {
-    console.log("removing reminder");
-    clearTimeout(reminderId);
-    reminderId = undefined;
-  }
+  console.log("removing reminder");
+  clearTimeout(reminderId);
+  reminderId = undefined;
 
-  if (nagId !== undefined) {
-    console.log("removing nag");
-    clearInterval(nagId);
-    nagId = undefined;
-  }
+  console.log("removing nag");
+  clearInterval(nagId);
+  nagId = undefined;
+
+  nagRetryCount = 0;
 }
 
 // Create a route that will handle Twilio webhook requests, sent as an
@@ -56,7 +58,7 @@ app.post("/voice", (req, res) => {
   function gather() {
     const gather = twiml.gather({ numDigits: 1 });
     gather.say(
-      "You left your garage door open. To close, press 1. To snooze, press 2. To ignore, press 3"
+      "You left your garage door open. To close, press 1. To ignore, press 2."
     );
 
     // If the user doesn't enter input, loop
@@ -74,9 +76,6 @@ app.post("/voice", (req, res) => {
         });
         break;
       case "2":
-        twiml.say("This notification has been snoozed, goodbye");
-        break;
-      case "3":
         twiml.say("Notification canceled, goodbye");
         cleanup();
         break;
@@ -119,14 +118,20 @@ function notify() {
 
 function nag() {
   notify();
-  nagId = setInterval(notify, 30 * 1000);
+  cleanup();
+  nagId = setInterval(() => {
+    nagRetryCount++;
+    if (nagRetryCount > NAG_RETRY_COUNT) {
+      cleanup();
+      return;
+    }
+    notify();
+  }, RETRY_INTERVAL * 1000);
 }
 
 const options = {
   email: process.env.MEROSS_EMAIL,
   password: process.env.MEROSS_PASSWORD,
-  // mfsCode: '123456', // optional
-  // tokenData: {...}, // Old Tokens - get after connect via "getTokenData()
   logger: console.log,
   localHttpFirst: true, // Try to contact the devices locally before trying the cloud
   onlyLocalForGet: true, // When trying locally, do not try the cloud for GET requests at all
@@ -194,26 +199,6 @@ meross.on("deviceInitialized", (deviceId, deviceDef, device) => {
       console.log(time, open);
     }
   });
-});
-
-meross.on("connected", (deviceId) => {
-  console.log(deviceId + " connected");
-});
-
-meross.on("close", (deviceId, error) => {
-  console.log(deviceId + " closed: " + error);
-});
-
-meross.on("error", (deviceId, error) => {
-  console.log(deviceId + " error: " + error);
-});
-
-meross.on("reconnect", (deviceId) => {
-  console.log(deviceId + " reconnected");
-});
-
-meross.on("data", (deviceId, payload) => {
-  console.log(deviceId + " data: " + JSON.stringify(payload));
 });
 
 meross.connect((error) => {
