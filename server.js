@@ -107,13 +107,15 @@ app.get("/call", (req, res) => {
 });
 
 function notify() {
-  client.calls
-    .create({
-      url: process.env.SERVER_URL + "/voice",
-      to: callees[0],
-      from: process.env.TWILIO_PHONE_NUMBER,
-    })
-    .then((call) => console.log(call.sid));
+  callees.map((callee) => {
+    client.calls
+      .create({
+        url: process.env.SERVER_URL + "/voice",
+        to: callee,
+        from: process.env.TWILIO_PHONE_NUMBER,
+      })
+      .then((call) => console.log(callee, call.sid));
+  });
 }
 
 function nag() {
